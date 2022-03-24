@@ -1,7 +1,9 @@
 import numpy as np
 from real_robots.policy import BasePolicy
 from baseline.planner import Planner
+import baseline.abstractor as abstr
 from baseline.abstractor import currentAbstraction
+from models.forward_model import ForwardModel
 import baseline.config as config
 import baseline.explorer as exp
 
@@ -133,9 +135,37 @@ class EndAction(State):
         post = (post_image, post_pos, post_mask)
 
         self.actionData += [post]
+        
         self.caller.storeAction(self.actionData)
 
+        self.caller.update_intrinsic_steps()
+        self.caller.train_step
+
         State.actionData = []
+        if self.caller.intrinsic_steps%self.caller.train_step ==0:
+            nextState = TrainModels()
+        else:
+            nextState = ActionStart()
+
+        return nextState.step(observation, reward, done)
+
+class TrainModels(State):
+    """
+    This class represents the state immediately after the DoAction has
+    ended. The action data (pre, action, post) is saved by calling the
+    Baseline storeAction() method.
+
+    """
+
+    def step(self, observation, reward, done):
+        """
+        Train VAE and dynamic abstractor (pour l'instant après il faudra tout train)
+
+        """
+        self.caller.train_abstractor()
+        self.caller.train_forward()
+        
+        
 
         nextState = ActionStart()
         return nextState.step(observation, reward, done)
@@ -358,7 +388,7 @@ class Baseline(BasePolicy):
     Main class of the baseline
 
     Parameters
-    ----------
+  storeAction  ----------
 
     Attributes
     ----------
@@ -387,6 +417,13 @@ class Baseline(BasePolicy):
         self.action_type = list(action_space.spaces.keys())[0]
         action_parameter_space = action_space[self.action_type]
         self.explorer = exp.RandomExploreAgent(action_parameter_space)
+        self.abstractor = abstr.VAEAbstractor()
+        self.forward = ForwardModel(abstractor = self.abstractor)
+        self.train_step = 2  #train VAE every 20 actions
+        self.intrinsic_steps =0
+        
+    def update_intrinsic_steps(self):
+        self.intrinsic_steps +=1
 
     def storeAction(self, actionData):
         """
@@ -447,6 +484,28 @@ class Baseline(BasePolicy):
         self.state, action, render = self.state.step(observation, reward, done)
         return {self.action_type: action, 'render': render}
 
+    def train_abstractor(self):
+        """
+        Train abstractor wit the actions collected in the
+        intrinsic phase, or with the actions saved in the file written
+        in the config file
+        """
+        print(" ---------- START TRAINING ABSTRACTOR -------------------\n")
+        allActions = self.allActions
+        allAbstractedActions = self.get_all_actions(allActions)    
+        self.abstractor.train(allAbstractedActions)
+
+    def train_forward(self):
+        """
+        Train forward model wit the actions collected in the
+        intrinsic phase, or with the actions saved in the file written
+        in the config file
+        """
+        print(" ---------- START TRAINING FORWARD MODEL -------------------\n")
+        allActions = self.allActions
+        allAbstractedActions = self.get_all_actions(allActions)    
+        self.forward.train(allAbstractedActions)
+
     def plan(self, goal_abs, pre_abs):
         """
         Use the Planner class to plan the list of actions to be
@@ -473,6 +532,39 @@ class Baseline(BasePolicy):
             self.plan_sequence = self.plan_sequence[1:]
 
         return self.plan_sequence
+    
+    def get_all_actions(self, allActions):
+
+        if config.sim['use_experience_data']:
+            if config.sim['compressed_data']:
+                allActions = np.load(config.sim['experience_data'],
+                                     allow_pickle=True)['arr_0']
+            else:
+                allActions = np.load(config.sim['experience_data'],
+                                     allow_pickle=True)
+
+        if len(allActions) < 1:
+            raise Exception('No transitions file found!\n' +
+                            'Please, either run the intrinsic phase first' +
+                            ' or specify a valid transitions file in the' +
+                            ' baseline/config.yml with use_experience_data:' +
+                            ' true')
+
+        # filter actions where the arm did not go back home
+        firstRow = allActions[0][0][0][0, :]
+
+        def validAction(action):
+            ok_pre = np.all(action[0][0][0, :] == firstRow)
+            ok_post = np.all(action[2][0][0, :] == firstRow)
+            return ok_pre and ok_post
+
+        allActions = [action for action in allActions if validAction(action)]
+
+        allAbstractedActions = [[currentAbstraction(a[0]), a[1],
+                                 currentAbstraction(a[2])]
+                                for a in allActions]
+
+        return allAbstractedActions
 
     def end_intrinsic_phase(self, observation, reward, done):
         """

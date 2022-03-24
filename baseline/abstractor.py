@@ -9,6 +9,7 @@ from tensorflow import keras
 import numpy as np
 import baseline.config as config
 import cv2
+import matplotlib.pyplot as plt
 
 # Set memory growth
 import tensorflow as tf
@@ -114,7 +115,7 @@ class VAEAbstractor():
         decoder : function
             function mappping from the latent space to images
     """
-    def __init__(self, images, latent_dim, retrain=False):
+    def __init__(self, latent_dim = 7, retrain=False):
 
         # reparameterization trick
         # instead of sampling from Q(z|X), sample epsilon = N(0,I)
@@ -142,25 +143,22 @@ class VAEAbstractor():
             epsilon = K.random_normal(shape=(batch, dim))
             return z_mean + K.exp(0.5 * z_log_var) * epsilon
 
-        fl = images
-
         if config.abst['pre_trained_vae'] and not retrain:
             # load a pre-trained auto-encoder
             self.encoder = keras.models.load_model('trained_encoder')
             self.decoder = keras.models.load_model('trained_decoder')
+        
         else:
-            x_train = fl[:int(np.floor(len(fl) * 0.80))]
-            x_test = fl[int(np.ceil(len(fl) * 0.80)):]
-            image_rows = x_train[0].shape[0]
-            image_columns = x_train[0].shape[1]
-            original_dim = image_rows * image_columns
-            x_train = np.reshape(x_train, [-1, original_dim])
-            x_test = np.reshape(x_test, [-1, original_dim])
+            
+            self.image_rows = 240
+            self.image_columns = 320
+            self.original_dim = self.image_rows * self.image_columns
+            
+            self.latent_dim = latent_dim
 
-            input_shape = (original_dim, )
+            input_shape = (self.original_dim, )
             intermediate_dim = 512
-            batch_size = 128
-            epochs = 30
+            
 
             # VAE model = encoder + decoder
             # build encoder model
@@ -180,7 +178,7 @@ class VAEAbstractor():
             # build decoder model
             latent_inputs = Input(shape=(latent_dim,), name='z_sampling')
             x = Dense(intermediate_dim, activation='relu')(latent_inputs)
-            outputs = Dense(original_dim, activation='sigmoid')(x)
+            outputs = Dense(self.original_dim, activation='sigmoid')(x)
 
             # instantiate decoder model
             self.decoder = Model(latent_inputs, outputs, name='decoder')
@@ -188,7 +186,7 @@ class VAEAbstractor():
 
             # instantiate VAE model
             outputs = self.decoder(self.encoder(inputs)[2])
-            vae = Model(inputs, outputs, name='vae_mlp')
+            self.vae = Model(inputs, outputs, name='vae_mlp')
 
             # VAE loss = mse_loss or xent_loss + kl_loss
             if False:
@@ -197,29 +195,52 @@ class VAEAbstractor():
                 reconstruction_loss = binary_crossentropy(inputs,
                                                           outputs)
 
-            reconstruction_loss *= original_dim
+            reconstruction_loss *= self.original_dim
             kl_loss = 1 + z_log_var - K.square(z_mean) - K.exp(z_log_var)
             kl_loss = K.sum(kl_loss, axis=-1)
             kl_loss *= -0.5
             vae_loss = K.mean(reconstruction_loss + kl_loss)
-            vae.add_loss(vae_loss)
-            vae.compile(optimizer='adam')
-            vae.summary()
+            self.vae.add_loss(vae_loss)
+            self.vae.compile(optimizer='adam')
+            self.vae.summary()
 
-            # train the autoencoder
-            vae.fit(x_train,
-                    epochs=epochs,
-                    batch_size=batch_size,
-                    validation_data=(x_test, None))
+    def train(self, actions):
 
-            self.encoder.save('trained_encoder')
-            self.decoder.save('trained_decoder')
+        images = [actions[i][0] for i in range(len(actions))]
+        images += [actions[i][2] for i in range(len(actions))]
+
+        images = self.get_binary_images(images)
+
+        fl = images
+        print("Total actions {} for the forward model".format(len(images)))
+        x_train = fl[:int(np.floor(len(fl) * 0.80))]
+        x_test = fl[int(np.ceil(len(fl) * 0.20)):]
+        
+        x_train = np.reshape(x_train, [-1, self.original_dim])
+        x_test = np.reshape(x_test, [-1, self.original_dim])
+
+        batch_size = 128
+        epochs = 30
+
+        self.vae.fit(x_train,
+                epochs=epochs,
+                batch_size=batch_size,
+                validation_data=(x_test, None))
 
     def get_encoder(self):
         return self.encoder
 
     def get_decoder(self):
         return self.decoder
+
+    def get_binary_images(self, images):
+        self.cbsm = cv2.createBackgroundSubtractorMOG2(len(images))
+        
+        for i in range(len(images)):
+            self.cbsm.apply(images[i])
+
+        return [self.background_subtractor(img) for img in images]
+
 
     def get_abstraction_from_binary_image(self, image):
         return self.encoder.predict(np.reshape(image,
@@ -229,6 +250,9 @@ class VAEAbstractor():
         return self.encoder.predict(np.reshape(mask,
                                     [-1, len(mask) * len(mask[0])]))
 
+
+    def background_subtractor(self, img):
+        return self.cbsm.apply(img, learningRate=0) != 0
 
 class DynamicAbstractor():
     """
@@ -280,10 +304,13 @@ class DynamicAbstractor():
             self.cbsm.apply(images[i])
 
         images = [self.background_subtractor(img) for img in images]
-
+        
+        #To be changed, wrong encoder passed 
+        # ---------------------------------------------------------#
         ab = VAEAbstractor(images, latent_dim=7 * config.abst['n_obj'])
         self.encoder = ab.get_encoder()
         self.decoder = ab.get_decoder()
+        # ---------------------------------------------------------#
 
         self.actions = []
         n_cells = len(actions[0][0]) * len(actions[0][0][0])
