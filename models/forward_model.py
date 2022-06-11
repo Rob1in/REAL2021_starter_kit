@@ -105,20 +105,19 @@ class ForwardModel():
  
         pre_bin_images = self.abstractor.get_binary_images(pre_images)
         post_bin_images = self.abstractor.get_binary_images(post_images)
-
+    
         pre_abs = [self.abstractor.get_abstraction_from_binary_image(image)[-1] for image in pre_bin_images]
         post_abs = [self.abstractor.get_abstraction_from_binary_image(image)[-1] for image in post_bin_images]
 
-        #get the right shape: (self.latent_dim, )
+        #get the right shape: [(self.latent_dim, ), ... , (self.latent_dim, )]
         pre_abs = [abstraction[0] for abstraction in pre_abs]
         post_abs = [abstraction[0] for abstraction in post_abs]
 
         # IL FAUT CONSTRUIRE L'INPUT  ET RÉFLÉCHIR À NORMALISER LES INPUTS ET OUTPUTS
-        #   --> PRINTER un élément de pre abs et voiir comment créer la liste concaténée avec celles des actions. (zip ? )
 
 
         #Concatenate pre_abs and actions_list to build forward model's input
-        forward_inputs = [np.concatenate(action_abstract, axis = 0) for action_abstract in zip(actions_list, pre_abs)]
+        forward_inputs = [np.concatenate(action_abstraction, axis = 0) for action_abstraction in zip(actions_list, pre_abs)]
 
         x_train = forward_inputs[:int(np.floor(len(forward_inputs) * 0.80))]
         x_test = forward_inputs[int(np.ceil(len(forward_inputs) * 0.80)):]
@@ -133,7 +132,7 @@ class ForwardModel():
         y_test = np.reshape(y_test, [-1, self.latent_dim])
 
         batch_size = 128
-        epochs = 30
+        epochs = 5
 
         self.forward.fit(x_train,y_train,
                 epochs=epochs,

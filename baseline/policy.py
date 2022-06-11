@@ -4,6 +4,7 @@ from baseline.planner import Planner
 import baseline.abstractor as abstr
 from baseline.abstractor import currentAbstraction
 from models.forward_model import ForwardModel
+from models.curious_explorer import CuriousExplorer
 import baseline.config as config
 import baseline.explorer as exp
 
@@ -213,9 +214,8 @@ class ProposeNewAction(State):
         if config.sim['save_masks']:
             pre_mask = observation['mask']
 
-        pre = (pre_image, pre_pos, pre_mask)
-
-        action, debug = self.caller.explorer.selectNextAction()
+        pre = (pre_image, pre_pos, pre_mask)            
+        action = self.caller.propose_action()
 
         self.actionData += [pre, action]
         nextState = DoAction(action)
@@ -416,11 +416,16 @@ class Baseline(BasePolicy):
         self.plan_sequence = []
         self.action_type = list(action_space.spaces.keys())[0]
         action_parameter_space = action_space[self.action_type]
-        self.explorer = exp.RandomExploreAgent(action_parameter_space)
+        #self.explorer = exp.RandomExploreAgent(action_parameter_space)
         self.abstractor = abstr.VAEAbstractor()
         self.forward = ForwardModel(abstractor = self.abstractor)
-        self.train_step = 2  #train VAE every 20 actions
+        self.random_explorer = exp.RandomExploreAgent(action_parameter_space)
+        self.explorer = CuriousExplorer(action_space = action_parameter_space,
+                                        abstractor = self.abstractor, 
+                                        forward = self.forward)
+        self.train_step = 9  #train VAE every 20 actions
         self.intrinsic_steps =0
+        self.nb_random_steps = 10
         
     def update_intrinsic_steps(self):
         self.intrinsic_steps +=1
@@ -505,6 +510,24 @@ class Baseline(BasePolicy):
         allActions = self.allActions
         allAbstractedActions = self.get_all_actions(allActions)    
         self.forward.train(allAbstractedActions)
+
+
+    def propose_action(self):
+        
+        if config.exp['explorer'] == 'random':
+            action, debug = self.explorer.selectNextAction()
+
+        if config.exp['explorer'] == 'curious':
+            if self.intrinsic_steps < self.nb_random_steps:
+                action, debug = self.random_explorer.selectNextAction()
+            else:
+                allActions = self.allActions
+                allAbstractedActions = self.get_all_actions(allActions)
+                action, debug = self.explorer.selectNextAction(allAbstractedActions)
+
+           
+
+        return action
 
     def plan(self, goal_abs, pre_abs):
         """

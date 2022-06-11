@@ -14,6 +14,7 @@ exploration:
   action_size: 1000
   action_parts_max: 10
   home_duration: 150
+  explorer: 'curious' #or 'curious'
 simulation:
   experience_data: transitions_file.npz
   save_with_seed: false
@@ -22,4 +23,4 @@ simulation:
   save_images: true
   save_masks: false
   save_positions: false
-  use_experience_data: true
+  use_experience_data: false

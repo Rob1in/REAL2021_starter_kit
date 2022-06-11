@@ -184,9 +184,7 @@ class VAEAbstractor():
             self.decoder = Model(latent_inputs, outputs, name='decoder')
             self.decoder.summary()
 
-            # instantiate VAE model
-            outputs = self.decoder(self.encoder(inputs)[2])
-            self.vae = Model(inputs, outputs, name='vae_mlp')
+        self.decoder = ab.get_decoder()del(inputs, outputs, name='vae_mlp')
 
             # VAE loss = mse_loss or xent_loss + kl_loss
             if False:
@@ -220,7 +218,7 @@ class VAEAbstractor():
         x_test = np.reshape(x_test, [-1, self.original_dim])
 
         batch_size = 128
-        epochs = 30
+        epochs = 5
 
         self.vae.fit(x_train,
                 epochs=epochs,
@@ -232,6 +230,15 @@ class VAEAbstractor():
 
     def get_decoder(self):
         return self.decoder
+
+    def get_binary_last_image(self, images):
+            self.cbsm = cv2.createBackgroundSubtractorMOG2(len(images))
+            
+            for i in range(len(images)):
+                self.cbsm.apply(images[i])
+
+            return [self.background_subtractor(img) for img in images][-1]
+
 
     def get_binary_images(self, images):
         self.cbsm = cv2.createBackgroundSubtractorMOG2(len(images))
@@ -249,6 +256,7 @@ class VAEAbstractor():
     def get_abstraction_from_mask(self, mask):
         return self.encoder.predict(np.reshape(mask,
                                     [-1, len(mask) * len(mask[0])]))
+
 
 
     def background_subtractor(self, img):
